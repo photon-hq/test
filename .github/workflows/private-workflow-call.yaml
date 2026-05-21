@@ -1,0 +1,24 @@
+name: Private Workflow Call
+
+# Tests whether a PUBLIC repo (photon-hq/test) can `uses:` a reusable
+# workflow that lives in an INTERNAL/PRIVATE repo
+# (photon-hq/buildspace-private).
+#
+# If the called repo doesn't allow access from this repo, the dispatch
+# fails at parse time with:
+#   "workflow was not found"
+# Fix is on the called repo's side:
+#   Settings -> Actions -> General -> "Access" ->
+#     "Accessible from repositories owned by 'photon-hq'"
+#   (and for public callers, also tick "...including public repositories").
+
+on:
+  workflow_dispatch:
+
+jobs:
+  call-private-workflow:
+    name: Call check-readme.yaml from buildspace-private
+    uses: photon-hq/buildspace-private/.github/workflows/check-readme.yaml@main
+    with:
+      blocking: false
+    secrets: inherit
