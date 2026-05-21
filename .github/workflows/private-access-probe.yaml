@@ -1,0 +1,56 @@
+name: Private Access Probe
+
+# Tests two things at once:
+#  1. Can a PUBLIC repo (photon-hq/test) read an organization-level secret?
+#  2. Can a PUBLIC repo `uses:` a reusable workflow that lives in a
+#     non-public repo (photon-hq/buildspace-private, INTERNAL visibility)?
+#
+# Run via the Actions tab -> "Private Access Probe" -> Run workflow,
+# or `gh workflow run private-access-probe.yaml --repo photon-hq/test`.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  org-secret-access:
+    name: Read org secret from public repo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe OPENAI_API_KEY
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "${OPENAI_API_KEY}" ]; then
+            echo "::error::OPENAI_API_KEY org secret is NOT visible to this public repo."
+            exit 1
+          fi
+          echo "OPENAI_API_KEY is visible (length=${#OPENAI_API_KEY})."
+
+      - name: Probe APP_ID / APP_PRIVATE_KEY
+        env:
+          APP_ID: ${{ secrets.APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+        run: |
+          missing=()
+          [ -z "${APP_ID}" ]          && missing+=("APP_ID")
+          [ -z "${APP_PRIVATE_KEY}" ] && missing+=("APP_PRIVATE_KEY")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing org secrets in public repo: ${missing[*]}"
+            exit 1
+          fi
+          echo "APP_ID visible (length=${#APP_ID}), APP_PRIVATE_KEY visible (length=${#APP_PRIVATE_KEY})."
+
+  call-private-workflow:
+    name: Call reusable workflow from buildspace-private
+    # If the public repo isn't allowed to reference workflows in
+    # buildspace-private, GitHub fails the whole run at parse time
+    # with "workflow was not found" before any job starts. If the org
+    # secret can't be passed via `secrets: inherit`, the called
+    # workflow fails on the required `OPENAI_API_KEY` input.
+    uses: photon-hq/buildspace-private/.github/workflows/check-readme.yaml@main
+    with:
+      blocking: false
+    secrets: inherit
