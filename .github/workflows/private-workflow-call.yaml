@@ -47,18 +47,22 @@ jobs:
           gh api repos/photon-hq/buildspace-private/actions/workflows/ping.yaml \
             --jq '{id, name, state, path}'
 
-      - name: Dispatch ping.yaml in buildspace-private
+      - name: Dispatch notify-release.yaml in buildspace-private
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           set -euo pipefail
-          gh workflow run ping.yaml \
-            --repo photon-hq/buildspace-private \
-            --ref  test/cross-repo-dispatch-probe \
-            -f caller="${GITHUB_REPOSITORY}" \
-            -f note="dispatched from ${GITHUB_REPOSITORY} run ${GITHUB_RUN_ID}"
+          jq -nc \
+            --arg cr "${GITHUB_REPOSITORY}" \
+            --arg sn "test-probe" \
+            --arg v  "0.0.1" \
+            --arg n  "Synthetic dispatch from $GITHUB_REPOSITORY run $GITHUB_RUN_ID. No previous release exists; classify defaults to minor. URL map has no entry for $GITHUB_REPOSITORY so notify short-circuits without POSTing." \
+            '{ref: "main", inputs: {"caller-repo": $cr, "service-name": $sn, version: $v, "release-notes": $n}}' \
+          | gh api -X POST \
+              "repos/photon-hq/buildspace-private/actions/workflows/notify-release.yaml/dispatches" \
+              --input -
 
-      - name: Wait briefly, then locate the dispatched run
+      - name: Locate the dispatched run
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
         run: |
@@ -66,7 +70,7 @@ jobs:
           for i in 1 2 3 4 5 6 7 8 9 10; do
             sleep 3
             run_json="$(gh api \
-              "repos/photon-hq/buildspace-private/actions/workflows/ping.yaml/runs?per_page=1&event=workflow_dispatch" \
+              "repos/photon-hq/buildspace-private/actions/workflows/notify-release.yaml/runs?per_page=1&event=workflow_dispatch" \
               --jq '.workflow_runs[0] // empty')"
             if [ -n "${run_json}" ]; then
               echo "Found run after ${i} polls:"
