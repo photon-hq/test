@@ -1,16 +1,14 @@
 name: Private Workflow Call
 
-# Tests whether a PUBLIC repo (photon-hq/test) can `uses:` a reusable
-# workflow that lives in an INTERNAL/PRIVATE repo
-# (photon-hq/buildspace-private).
+# Demonstrates the working pattern:
+#   PUBLIC repo (photon-hq/test) mints a GitHub App installation token
+#   from org secrets (APP_ID + APP_PRIVATE_KEY), then uses that token to
+#   dispatch a workflow that lives in an INTERNAL repo
+#   (photon-hq/buildspace-private).
 #
-# If the called repo doesn't allow access from this repo, the dispatch
-# fails at parse time with:
-#   "workflow was not found"
-# Fix is on the called repo's side:
-#   Settings -> Actions -> General -> "Access" ->
-#     "Accessible from repositories owned by 'photon-hq'"
-#   (and for public callers, also tick "...including public repositories").
+# This works because the GitHub App is installed at the org level and
+# has actions:write on the target repo. The `uses: org/private/...` path
+# is blocked for public callers; the REST dispatch API is not.
 
 on:
   push:
@@ -20,14 +18,62 @@ on:
       - 'probe.txt'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  call-private-workflow:
-    name: Call typescript-service-release from buildspace-private
-    uses: photon-hq/buildspace-private/.github/workflows/typescript-service-release.yaml@main
-    with:
-      service-name: test
-      working-directory: .
-      build-command: "echo build"
-      publish-command: "echo publish"
-      dry-run: true
-    secrets: inherit
+  dispatch-into-private:
+    name: Dispatch ping in buildspace-private via App token
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint App installation token scoped to buildspace-private
+        id: token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: photon-hq
+          repositories: buildspace-private
+
+      - name: Confirm token can read buildspace-private (proves install + read)
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          echo "Repo metadata:"
+          gh api repos/photon-hq/buildspace-private --jq '{name, visibility, default_branch}'
+
+          echo "Workflow ping.yaml:"
+          gh api repos/photon-hq/buildspace-private/actions/workflows/ping.yaml \
+            --jq '{id, name, state, path}'
+
+      - name: Dispatch ping.yaml in buildspace-private
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run ping.yaml \
+            --repo photon-hq/buildspace-private \
+            --ref  test/cross-repo-dispatch-probe \
+            -f caller="${GITHUB_REPOSITORY}" \
+            -f note="dispatched from ${GITHUB_REPOSITORY} run ${GITHUB_RUN_ID}"
+
+      - name: Wait briefly, then locate the dispatched run
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            sleep 3
+            run_json="$(gh api \
+              "repos/photon-hq/buildspace-private/actions/workflows/ping.yaml/runs?per_page=1&event=workflow_dispatch" \
+              --jq '.workflow_runs[0] // empty')"
+            if [ -n "${run_json}" ]; then
+              echo "Found run after ${i} polls:"
+              echo "${run_json}" | jq '{id, status, conclusion, html_url, created_at}'
+              echo "URL=$(echo "${run_json}" | jq -r .html_url)" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+          echo "::error::No dispatched run appeared after 30s of polling"
+          exit 1
