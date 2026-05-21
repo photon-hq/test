@@ -22,8 +22,12 @@ on:
 
 jobs:
   call-private-workflow:
-    name: Call check-readme.yaml from buildspace-private
-    uses: photon-hq/buildspace-private/.github/workflows/check-readme.yaml@main
+    name: Call typescript-service-release from buildspace-private
+    uses: photon-hq/buildspace-private/.github/workflows/typescript-service-release.yaml@main
     with:
-      blocking: false
+      service-name: test
+      working-directory: .
+      build-command: "echo build"
+      publish-command: "echo publish"
+      dry-run: true
     secrets: inherit
